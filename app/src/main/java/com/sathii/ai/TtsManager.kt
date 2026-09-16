@@ -30,18 +30,10 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
             tts?.setPitch(1.0f)
 
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(utteranceId: String?) {
-                    broadcastTtsState(true)
-                }
-
-                override fun onDone(utteranceId: String?) {
-                    broadcastTtsState(false)
-                }
-
+                override fun onStart(utteranceId: String?) { broadcastTtsState(true) }
+                override fun onDone(utteranceId: String?) { broadcastTtsState(false) }
                 @Deprecated("Deprecated in Java")
-                override fun onError(utteranceId: String?) {
-                    broadcastTtsState(false)
-                }
+                override fun onError(utteranceId: String?) { broadcastTtsState(false) }
             })
 
             isInitialized = true
@@ -58,8 +50,15 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
 
     fun speak(text: String) {
         if (!isInitialized) return
-        val utteranceId = "SathiUtterance_${System.currentTimeMillis()}"
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+        
+        // Settings se live status check karein
+        val prefs = context.getSharedPreferences("sathi_settings", Context.MODE_PRIVATE)
+        val voiceEnabled = prefs.getBoolean("voice_feedback_enabled", true)
+        
+        if (voiceEnabled) {
+            val utteranceId = "SathiUtterance_${System.currentTimeMillis()}"
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+        }
     }
 
     fun stop() {
