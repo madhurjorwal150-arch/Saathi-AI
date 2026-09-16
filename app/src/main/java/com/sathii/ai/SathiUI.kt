@@ -355,17 +355,3 @@ fun NotesScreen(
         }
     }
 }
-
-@Composable
-fun ToolsScreen(onExecuteText: (String) -> Unit) {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text("Real Device OS Control Tools", color = Color.Gray)
-    }
-}
-
-@Composable
-fun SettingsScreen() {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text("Sathi Engine & Voice Settings", color = Color.Gray)
-    }
-}

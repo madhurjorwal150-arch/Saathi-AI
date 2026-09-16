@@ -109,7 +109,7 @@ class MainActivity : ComponentActivity() {
         chatList.add(ChatMessage(sender = "User", text = command))
         assistantState.value = AssistantState.THINKING
 
-        val intentResult = intentClassifier.classify(command)
+        val intentResult: ParsedIntent = intentClassifier.classify(command)
 
         when (intentResult.type) {
             IntentType.NOTE_CREATE -> {
