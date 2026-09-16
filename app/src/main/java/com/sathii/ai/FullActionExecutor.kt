@@ -8,174 +8,166 @@ import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.net.Uri
 import android.provider.AlarmClock
-import android.provider.MediaStore
-import android.provider.Settings
-import com.sathii.ai.model.ActionResult
-import com.sathii.ai.model.IntentType
-import com.sathii.ai.model.SathiIntent
 
 class FullActionExecutor(private val context: Context) {
 
-    fun execute(intent: SathiIntent): ActionResult {
+    fun execute(intent: ParsedIntent): ActionResult {
         return when (intent.type) {
-            IntentType.TORCH_ON -> setTorch(true)
-            IntentType.TORCH_OFF -> setTorch(false)
-            IntentType.VOLUME_UP -> adjustVolume(true)
-            IntentType.VOLUME_DOWN -> adjustVolume(false)
-            IntentType.SET_TIMER -> setTimer(intent.parameters["minutes"]?.toIntOrNull() ?: 5)
-            IntentType.SET_ALARM -> setAlarm(intent.parameters["hour"]?.toIntOrNull() ?: 7, intent.parameters["minutes"]?.toIntOrNull() ?: 0)
-            IntentType.PLAY_MUSIC_SPOTIFY -> playSpotify(intent.target)
-            IntentType.PLAY_YOUTUBE -> playYouTube(intent.target)
-            IntentType.SEARCH_YOUTUBE -> searchYouTube(intent.target)
-            IntentType.OPEN_APP -> openApp(intent.target)
-            IntentType.SEARCH_WEB -> searchWeb(intent.target)
-            IntentType.CONVERSATION, IntentType.CREATE_NOTE -> ActionResult(true, intent.type.name, intent.directReply)
-            IntentType.UNKNOWN -> ActionResult(false, "UNKNOWN", "Samajh nahi aaya bhai, kripya dubara kahein.")
+            IntentType.CONVERSATION -> handleConversation(intent.target)
+            IntentType.TORCH_ON -> toggleTorch(true)
+            IntentType.TORCH_OFF -> toggleTorch(false)
+            IntentType.VOLUME_UP -> adjustVolume(AudioManager.ADJUST_RAISE)
+            IntentType.VOLUME_DOWN -> adjustVolume(AudioManager.ADJUST_LOWER)
+            IntentType.OPEN_APP -> openApplication(intent.target)
+            IntentType.SET_TIMER -> setTimer(intent.target.toIntOrNull() ?: 5)
+            IntentType.SET_ALARM -> setAlarm(intent.target.toIntOrNull() ?: 6)
+            IntentType.YOUTUBE_SEARCH -> searchYouTube(intent.target)
+            IntentType.YOUTUBE_PLAY -> playYouTube(intent.target)
+            IntentType.SPOTIFY_SEARCH -> searchSpotify(intent.target)
+            IntentType.SPOTIFY_PLAY -> playSpotify(intent.target)
+            IntentType.WEB_SEARCH -> executeWebSearch(intent.target)
+            IntentType.NOTE_CREATE,
+            IntentType.OPEN_WEBSITE -> ActionResult(true, "NOOP", "")
         }
     }
 
-    private fun setTorch(enable: Boolean): ActionResult {
+    private fun handleConversation(input: String): ActionResult {
+        val lower = input.lowercase()
+        val reply = when {
+            lower.contains("love you") -> "Main hamesha aapke sath hoon, Madhur!"
+            lower.contains("kaise ho") -> "Main bilkul badiya hoon! Aap batayein main kya madad karu?"
+            lower.contains("who are you") || lower.contains("kon ho") -> "Main Sathi hoon, aapka native personal AI assistant."
+            else -> "Ji, main sun raha hoon. Hukum kijiye kya karna hai?"
+        }
+        return ActionResult(true, "CONVERSATION", reply)
+    }
+
+    private fun toggleTorch(enable: Boolean): ActionResult {
         return try {
             val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
             val cameraId = cameraManager.cameraIdList[0]
             cameraManager.setTorchMode(cameraId, enable)
-            ActionResult(true, "TORCH", if (enable) "Torch on ho gayi." else "Torch off ho gayi.")
+            ActionResult(true, "TORCH", if (enable) "Torch on kar di hai" else "Torch band kar di hai")
         } catch (e: Exception) {
-            ActionResult(false, "TORCH", "Torch toggle nahi ho payi: ${e.localizedMessage}")
+            ActionResult(false, "TORCH", "Torch access nahi ho payi: ${e.message}")
         }
     }
 
-    private fun adjustVolume(increase: Boolean): ActionResult {
+    private fun adjustVolume(direction: Int): ActionResult {
         return try {
             val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            val direction = if (increase) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER
             audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, AudioManager.FLAG_SHOW_UI)
-            ActionResult(true, "VOLUME", if (increase) "Volume badha diya." else "Volume kam kar diya.")
+            ActionResult(true, "VOLUME", "Volume adjust kar diya hai")
         } catch (e: Exception) {
-            ActionResult(false, "VOLUME", "Volume adjust nahi ho paya.")
+            ActionResult(false, "VOLUME", "Volume control me error aaya")
         }
+    }
+
+    private fun openApplication(appName: String): ActionResult {
+        val pm = context.packageManager
+        val packages = pm.getInstalledPackages(PackageManager.GET_META_DATA)
+        for (pkg in packages) {
+            val label = pkg.applicationInfo.loadLabel(pm).toString().lowercase()
+            if (label.contains(appName.lowercase())) {
+                val launchIntent = pm.getLaunchIntentForPackage(pkg.packageName)
+                if (launchIntent != null) {
+                    launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(launchIntent)
+                    return ActionResult(true, "OPEN_APP", "$label app khol diya hai")
+                }
+            }
+        }
+        return ActionResult(false, "OPEN_APP", "$appName app device me nahi mila")
     }
 
     private fun setTimer(minutes: Int): ActionResult {
-        return try {
-            val intent = Intent(AlarmClock.ACTION_SET_TIMER).apply {
-                putExtra(AlarmClock.EXTRA_LENGTH, minutes * 60)
-                putExtra(AlarmClock.EXTRA_MESSAGE, "Sathi Timer")
-                putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
+        val intent = Intent(AlarmClock.ACTION_SET_TIMER).apply {
+            putExtra(AlarmClock.EXTRA_LENGTH, minutes * 60)
+            putExtra(AlarmClock.EXTRA_MESSAGE, "Sathi Timer")
+            putExtra(AlarmClock.EXTRA_SKIP_UI, false)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        return if (intent.resolveActivity(context.packageManager) != null) {
             context.startActivity(intent)
-            ActionResult(true, "TIMER", "$minutes minute ka timer start kar diya.")
-        } catch (e: Exception) {
-            ActionResult(false, "TIMER", "Timer set karne ka intent fail ho gaya.")
+            ActionResult(true, "TIMER", "$minutes minute ka timer set karne clock app open kiya")
+        } else {
+            ActionResult(false, "TIMER", "Device par clock app support nahi mila")
         }
     }
 
-    private fun setAlarm(hour: Int, minutes: Int): ActionResult {
-        return try {
-            val intent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
-                putExtra(AlarmClock.EXTRA_HOUR, hour)
-                putExtra(AlarmClock.EXTRA_MINUTES, minutes)
-                putExtra(AlarmClock.EXTRA_MESSAGE, "Sathi Alarm")
-                putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(intent)
-            ActionResult(true, "ALARM", "$hour baje ka alarm set kar diya.")
-        } catch (e: Exception) {
-            ActionResult(false, "ALARM", "Alarm set karne me dikkat aayi.")
+    private fun setAlarm(hour: Int): ActionResult {
+        val intent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
+            putExtra(AlarmClock.EXTRA_HOUR, hour)
+            putExtra(AlarmClock.EXTRA_MINUTES, 0)
+            putExtra(AlarmClock.EXTRA_MESSAGE, "Sathi Alarm")
+            putExtra(AlarmClock.EXTRA_SKIP_UI, false)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-    }
-
-    private fun playSpotify(query: String): ActionResult {
-        return try {
-            val uri = Uri.parse("spotify:search:" + Uri.encode(query))
-            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                setPackage("com.spotify.music")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
+        return if (intent.resolveActivity(context.packageManager) != null) {
             context.startActivity(intent)
-            ActionResult(true, "SPOTIFY", "Spotify par $query search & play request bhej di.")
-        } catch (e: Exception) {
-            val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://open.spotify.com/search/" + Uri.encode(query))).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(webIntent)
-            ActionResult(true, "SPOTIFY", "Spotify app nahi mila, browser me open kiya.")
-        }
-    }
-
-    private fun playYouTube(query: String): ActionResult {
-        return try {
-            val intent = Intent(Intent.ACTION_SEARCH).apply {
-                setPackage("com.google.android.youtube")
-                putExtra("query", query)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(intent)
-            ActionResult(true, "YOUTUBE_PLAY", "YouTube par '$query' play karne ke liye open kar diya.")
-        } catch (e: Exception) {
-            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=" + Uri.encode(query))).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(intent)
-            ActionResult(true, "YOUTUBE_PLAY", "YouTube browser me open kar diya.")
+            ActionResult(true, "ALARM", "$hour baje ka alarm set karne clock open kiya")
+        } else {
+            ActionResult(false, "ALARM", "Alarm support uplabdh nahi hai")
         }
     }
 
     private fun searchYouTube(query: String): ActionResult {
-        return playYouTube(query)
+        val intent = Intent(Intent.ACTION_SEARCH).apply {
+            setPackage("com.google.android.youtube")
+            putExtra("query", query)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        return if (intent.resolveActivity(context.packageManager) != null) {
+            context.startActivity(intent)
+            ActionResult(true, "YOUTUBE_SEARCH", "YouTube par $query search kiya")
+        } else {
+            val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=$query")).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(webIntent)
+            ActionResult(true, "YOUTUBE_SEARCH", "Browser me YouTube search khol diya")
+        }
     }
 
-    private fun openApp(appName: String): ActionResult {
-        val clean = appName.lowercase().trim()
-        val pm = context.packageManager
-
-        if (clean.contains("camera")) {
-            val intent = Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(intent)
-            return ActionResult(true, "OPEN_APP", "Camera open ho gaya.")
-        }
-
-        if (clean.contains("settings")) {
-            val intent = Intent(Settings.ACTION_SETTINGS).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(intent)
-            return ActionResult(true, "OPEN_APP", "Settings open ho gayi.")
-        }
-
-        val installedApps = pm.getInstalledApplications(PackageManager.GET_META_DATA)
-        for (app in installedApps) {
-            val label = pm.getApplicationLabel(app).toString().lowercase()
-            if (label.contains(clean) || app.packageName.lowercase().contains(clean)) {
-                val launchIntent = pm.getLaunchIntentForPackage(app.packageName)
-                if (launchIntent != null) {
-                    launchIntent.addFlags(
-                        Intent.FLAG_ACTIVITY_NEW_TASK or
-                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                        Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
-                    )
-                    context.startActivity(launchIntent)
-                    return ActionResult(true, "OPEN_APP", "$label app khol diya.")
-                }
-            }
-        }
-        return ActionResult(false, "OPEN_APP", "Aapke phone me '$appName' app nahi mila.")
+    private fun playYouTube(query: String): ActionResult {
+        searchYouTube(query)
+        return ActionResult(true, "YOUTUBE_PLAY", "YouTube khol diya hai, video play karein")
     }
 
-    private fun searchWeb(query: String): ActionResult {
+    private fun searchSpotify(query: String): ActionResult {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("spotify:search:$query")).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
         return try {
-            val intent = Intent(Intent.ACTION_WEB_SEARCH).apply {
-                putExtra(SearchManager.QUERY, query)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
             context.startActivity(intent)
-            ActionResult(true, "WEB_SEARCH", "Google par search kar diya: $query")
+            ActionResult(true, "SPOTIFY_SEARCH", "Spotify par $query dhoondh rahe hain")
         } catch (e: Exception) {
-            ActionResult(false, "WEB_SEARCH", "Browser open nahi ho saka.")
+            ActionResult(false, "SPOTIFY_SEARCH", "Spotify app phone me installed nahi hai")
+        }
+    }
+
+    private fun playSpotify(query: String): ActionResult {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("spotify:search:$query")).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        return try {
+            context.startActivity(intent)
+            ActionResult(true, "SPOTIFY_PLAY", "Spotify me $query khol diya hai")
+        } catch (e: Exception) {
+            ActionResult(false, "SPOTIFY_PLAY", "Spotify app nahi mila")
+        }
+    }
+
+    private fun executeWebSearch(query: String): ActionResult {
+        val intent = Intent(Intent.ACTION_WEB_SEARCH).apply {
+            putExtra(SearchManager.QUERY, query)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        return try {
+            context.startActivity(intent)
+            ActionResult(true, "WEB_SEARCH", "$query ke liye search open kiya")
+        } catch (e: Exception) {
+            ActionResult(false, "WEB_SEARCH", "Search open nahi ho paya")
         }
     }
 }
