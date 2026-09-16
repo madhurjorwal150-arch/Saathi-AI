@@ -1,68 +1,104 @@
 package com.sathii.ai
 
 import android.Manifest
-import android.app.KeyguardManager
-import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.provider.Settings
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
-import com.sathii.ai.model.ActionResult
-import com.sathii.ai.model.IntentType
+import androidx.lifecycle.lifecycleScope
+import com.sathii.ai.data.NoteEntity
+import com.sathii.ai.data.SathiDatabase
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var fullExecutor: FullActionExecutor
-    private lateinit var intentClassifier: SathiIntentClassifier
     private lateinit var ttsManager: TtsManager
-    private val notesList = mutableListOf<NoteItem>()
+    private lateinit var actionExecutor: FullActionExecutor
+    private lateinit var intentClassifier: SathiIntentClassifier
+    private lateinit var database: SathiDatabase
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        val audioGranted = permissions[Manifest.permission.RECORD_AUDIO] ?: false
-        if (audioGranted) {
-            checkOverlayAndBatteryOptimizations()
+        val recordAudioGranted = permissions[Manifest.permission.RECORD_AUDIO] ?: false
+        if (recordAudioGranted) {
+            startVoiceService()
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        fullExecutor = FullActionExecutor(this)
-        intentClassifier = SathiIntentClassifier()
-        ttsManager = TtsManager(this)
-
         setupLockscreenFlags()
-        requestSystemPermissions()
-        handleVoiceIntent(intent)
+
+        database = SathiDatabase.getDatabase(this)
+        ttsManager = TtsManager(this)
+        actionExecutor = FullActionExecutor(this)
+        intentClassifier = SathiIntentClassifier()
+
+        val notesDao = database.noteDao()
 
         setContent {
-            SathiApp(
-                onTriggerVoice = {
-                    startListeningService()
+            SathiUI(
+                onVoiceTrigger = { startVoiceService() },
+                onExecuteText = { text -> handleCommand(text) },
+                notesDao = notesDao,
+                onSaveNote = { title, content ->
+                    lifecycleScope.launch {
+                        notesDao.insertNote(NoteEntity(title = title, content = content))
+                    }
                 },
-                onExecuteCommand = { command ->
-                    executePipeline(command)
-                },
-                savedNotes = notesList
+                onDeleteNote = { note ->
+                    lifecycleScope.launch {
+                        notesDao.deleteNote(note)
+                    }
+                }
             )
+        }
+
+        checkAndRequestPermissions()
+        handleIncomingIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        intent?.let { handleIncomingIntent(it) }
+    }
+
+    private fun handleIncomingIntent(intent: Intent) {
+        val voiceCommand = intent.getStringExtra("voice_command")
+        if (!voiceCommand.isNullOrBlank()) {
+            handleCommand(voiceCommand)
         }
     }
 
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        handleVoiceIntent(intent)
+    private fun handleCommand(command: String) {
+        val intentResult = intentClassifier.classify(command)
+        
+        when (intentResult.type) {
+            IntentType.NOTE_CREATE -> {
+                lifecycleScope.launch {
+                    database.noteDao().insertNote(
+                        NoteEntity(
+                            title = "Voice Note",
+                            content = intentResult.target
+                        )
+                    )
+                }
+                ttsManager.speak("Note save kar liya hai: ${intentResult.target}")
+            }
+            else -> {
+                val actionResult = actionExecutor.execute(intentResult)
+                ttsManager.speak(actionResult.message)
+            }
+        }
     }
 
     private fun setupLockscreenFlags() {
@@ -74,80 +110,29 @@ class MainActivity : ComponentActivity() {
             window.addFlags(
                 WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
                 WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
-                WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
-                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
             )
         }
     }
 
-    private fun handleVoiceIntent(intent: Intent?) {
-        val voiceCommand = intent?.getStringExtra("voice_command")
-        if (!voiceCommand.isNullOrBlank()) {
-            val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && keyguardManager.isKeyguardLocked) {
-                keyguardManager.requestDismissKeyguard(this, object : KeyguardManager.KeyguardDismissCallback() {
-                    override fun onDismissSucceeded() {
-                        super.onDismissSucceeded()
-                        executePipeline(voiceCommand)
-                    }
-                    override fun onDismissError() {
-                        super.onDismissError()
-                        executePipeline(voiceCommand)
-                    }
-                })
-            } else {
-                executePipeline(voiceCommand)
-            }
-        }
-    }
-
-    private fun executePipeline(command: String): ActionResult {
-        val parsedIntent = intentClassifier.classify(command, "Madhur")
-
-        // Agar note intent hai toh note save karein
-        if (parsedIntent.type == IntentType.CREATE_NOTE) {
-            notesList.add(NoteItem(System.currentTimeMillis(), "Voice Note", parsedIntent.target))
-        }
-
-        // Action execute karein
-        val result = fullExecutor.execute(parsedIntent)
-
-        // Bol kar batayein
-        ttsManager.speak(result.message)
-
-        return result
-    }
-
-    private fun requestSystemPermissions() {
+    private fun checkAndRequestPermissions() {
         val permissions = mutableListOf(Manifest.permission.RECORD_AUDIO)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
         }
 
-        val allGranted = permissions.all {
-            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+        val missing = permissions.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
 
-        if (allGranted) {
-            checkOverlayAndBatteryOptimizations()
+        if (missing.isNotEmpty()) {
+            permissionLauncher.launch(missing.toTypedArray())
         } else {
-            permissionLauncher.launch(permissions.toTypedArray())
+            startVoiceService()
         }
     }
 
-    private fun checkOverlayAndBatteryOptimizations() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
-            val intent = Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:$packageName")
-            )
-            startActivity(intent)
-        }
-        startListeningService()
-    }
-
-    private fun startListeningService() {
+    private fun startVoiceService() {
         val serviceIntent = Intent(this, VoiceListeningService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(serviceIntent)
