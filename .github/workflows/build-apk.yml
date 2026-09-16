@@ -24,9 +24,15 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      - name: Accept Android Licenses & Setup SDK
+      - name: Setup Android Environment & Properties
         run: |
           echo "sdk.dir=$ANDROID_HOME" > local.properties
+          cat << 'PROP' > gradle.properties
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          android.enableJetifier=true
+          android.nonTransitiveRClass=true
+          PROP
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
       - name: Build Debug APK
