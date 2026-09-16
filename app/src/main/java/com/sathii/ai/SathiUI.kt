@@ -79,7 +79,7 @@ fun SathiUI(
             when (currentTab) {
                 0 -> HomeScreen(assistantState, onVoiceTrigger, onExecuteText)
                 1 -> ChatScreen(chatMessages, onExecuteText)
-                2 -> ToolsScreen(onExecuteText)
+                2 -> ToolsScreen(onExecuteCommand = onExecuteText)
                 3 -> NotesScreen(notesList, onSaveNote, onDeleteNote)
                 4 -> SettingsScreen()
             }
