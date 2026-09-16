@@ -1,5 +1,6 @@
 package com.sathii.ai
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -30,10 +31,14 @@ private val BgDark = Color(0xFF080B12)
 private val SurfaceDark = Color(0xFF121824)
 private val PrimaryCyan = Color(0xFF00E5FF)
 private val AccentPurple = Color(0xFF7C4DFF)
+private val StateListening = Color(0xFFFF5252)
+private val StateSpeaking = Color(0xFF69F0AE)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SathiUI(
+    assistantState: AssistantState,
+    chatMessages: List<ChatMessage>,
     onVoiceTrigger: () -> Unit,
     onExecuteText: (String) -> Unit,
     notesDao: NoteDao,
@@ -72,8 +77,8 @@ fun SathiUI(
     ) { padding ->
         Box(modifier = Modifier.padding(padding).fillMaxSize()) {
             when (currentTab) {
-                0 -> HomeScreen(onVoiceTrigger, onExecuteText)
-                1 -> ChatScreen(onExecuteText)
+                0 -> HomeScreen(assistantState, onVoiceTrigger, onExecuteText)
+                1 -> ChatScreen(chatMessages, onExecuteText)
                 2 -> ToolsScreen(onExecuteText)
                 3 -> NotesScreen(notesList, onSaveNote, onDeleteNote)
                 4 -> SettingsScreen()
@@ -83,17 +88,35 @@ fun SathiUI(
 }
 
 @Composable
-fun HomeScreen(onVoiceTrigger: () -> Unit, onExecuteText: (String) -> Unit) {
+fun HomeScreen(
+    state: AssistantState,
+    onVoiceTrigger: () -> Unit,
+    onExecuteText: (String) -> Unit
+) {
     var textInput by remember { mutableStateOf("") }
     val infiniteTransition = rememberInfiniteTransition(label = "orb")
-    val pulse by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = 1.15f,
+
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 1.0f,
+        targetValue = if (state == AssistantState.LISTENING || state == AssistantState.SPEAKING) 1.25f else 1.08f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = FastOutSlowInEasing),
+            animation = tween(
+                durationMillis = if (state == AssistantState.SPEAKING) 600 else 1200,
+                easing = FastOutSlowInEasing
+            ),
             repeatMode = RepeatMode.Reverse
         ),
-        label = "pulse"
+        label = "scale"
+    )
+
+    val orbColor by animateColorAsState(
+        targetValue = when (state) {
+            AssistantState.IDLE -> PrimaryCyan
+            AssistantState.LISTENING -> StateListening
+            AssistantState.THINKING -> AccentPurple
+            AssistantState.SPEAKING -> StateSpeaking
+        },
+        label = "orbColor"
     )
 
     Column(
@@ -103,25 +126,38 @@ fun HomeScreen(onVoiceTrigger: () -> Unit, onExecuteText: (String) -> Unit) {
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text("SATHI AI", color = PrimaryCyan, fontSize = 28.sp, fontWeight = FontWeight.Bold)
-            Text("Aapka Native Personal Assistant", color = Color.Gray, fontSize = 14.sp)
+            Text(
+                when (state) {
+                    AssistantState.IDLE -> "Ready for your command"
+                    AssistantState.LISTENING -> "Aapki aawaz sun raha hoon..."
+                    AssistantState.THINKING -> "Thinking..."
+                    AssistantState.SPEAKING -> "Speaking..."
+                },
+                color = Color.Gray,
+                fontSize = 14.sp
+            )
         }
 
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
-                .size(160.dp)
-                .scale(pulse)
+                .size(170.dp)
+                .scale(pulseScale)
                 .background(
-                    Brush.radialGradient(listOf(PrimaryCyan, AccentPurple, Color.Transparent)),
+                    Brush.radialGradient(listOf(orbColor, AccentPurple, Color.Transparent)),
                     shape = CircleShape
                 )
                 .clickable { onVoiceTrigger() }
         ) {
             Icon(
-                imageVector = Icons.Default.Mic,
-                contentDescription = "Voice Trigger",
+                imageVector = when (state) {
+                    AssistantState.LISTENING -> Icons.Default.GraphicEq
+                    AssistantState.SPEAKING -> Icons.Default.VolumeUp
+                    else -> Icons.Default.Mic
+                },
+                contentDescription = "Voice Orb",
                 tint = Color.White,
-                modifier = Modifier.size(56.dp)
+                modifier = Modifier.size(60.dp)
             )
         }
 
@@ -133,6 +169,80 @@ fun HomeScreen(onVoiceTrigger: () -> Unit, onExecuteText: (String) -> Unit) {
                 value = textInput,
                 onValueChange = { textInput = it },
                 placeholder = { Text("Command boliye ya likhiye...", color = Color.Gray) },
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White
+                ),
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(
+                onClick = {
+                    if (textInput.isNotBlank()) {
+                        onExecuteText(textInput)
+                        textInput = ""
+                    }
+                }
+            ) {
+                Icon(Icons.Default.Send, contentDescription = "Send", tint = PrimaryCyan)
+            }
+        }
+    }
+}
+
+@Composable
+fun ChatScreen(messages: List<ChatMessage>, onExecuteText: (String) -> Unit) {
+    var textInput by remember { mutableStateOf("") }
+
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Text("Conversation", color = PrimaryCyan, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(12.dp))
+
+        if (messages.isEmpty()) {
+            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Text("Koi baat cheet nahi hui abhi tak.", color = Color.Gray)
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                items(messages) { msg ->
+                    val isUser = msg.sender == "User"
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = if (isUser) AccentPurple else SurfaceDark,
+                            modifier = Modifier.widthIn(max = 280.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    if (isUser) "You" else "Sathi",
+                                    color = if (isUser) Color.White else PrimaryCyan,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(msg.text, color = Color.White, fontSize = 14.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth().background(SurfaceDark, RoundedCornerShape(14.dp)).padding(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextField(
+                value = textInput,
+                onValueChange = { textInput = it },
+                placeholder = { Text("Reply likhein...", color = Color.Gray) },
                 colors = TextFieldDefaults.colors(
                     focusedContainerColor = Color.Transparent,
                     unfocusedContainerColor = Color.Transparent,
@@ -243,13 +353,6 @@ fun NotesScreen(
                 }
             )
         }
-    }
-}
-
-@Composable
-fun ChatScreen(onExecuteText: (String) -> Unit) {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text("AI Assistant Chat History", color = Color.Gray)
     }
 }
 

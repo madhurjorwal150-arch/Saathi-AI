@@ -1,21 +1,23 @@
 package com.sathii.ai
 
 import android.Manifest
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.sathii.ai.data.NoteEntity
 import com.sathii.ai.data.SathiDatabase
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -24,6 +26,18 @@ class MainActivity : ComponentActivity() {
     private lateinit var actionExecutor: FullActionExecutor
     private lateinit var intentClassifier: SathiIntentClassifier
     private lateinit var database: SathiDatabase
+
+    private val assistantState = mutableStateOf(AssistantState.IDLE)
+    private val chatList = mutableStateListOf<ChatMessage>()
+
+    private val ttsStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == TtsManager.ACTION_TTS_STATE_CHANGED) {
+                val isSpeaking = intent.getBooleanExtra(TtsManager.EXTRA_IS_SPEAKING, false)
+                assistantState.value = if (isSpeaking) AssistantState.SPEAKING else AssistantState.IDLE
+            }
+        }
+    }
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -43,11 +57,23 @@ class MainActivity : ComponentActivity() {
         actionExecutor = FullActionExecutor(this)
         intentClassifier = SathiIntentClassifier()
 
+        val filter = IntentFilter(TtsManager.ACTION_TTS_STATE_CHANGED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(ttsStateReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(ttsStateReceiver, filter)
+        }
+
         val notesDao = database.noteDao()
 
         setContent {
             SathiUI(
-                onVoiceTrigger = { startVoiceService() },
+                assistantState = assistantState.value,
+                chatMessages = chatList,
+                onVoiceTrigger = {
+                    assistantState.value = AssistantState.LISTENING
+                    startVoiceService()
+                },
                 onExecuteText = { text -> handleCommand(text) },
                 notesDao = notesDao,
                 onSaveNote = { title, content ->
@@ -80,8 +106,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleCommand(command: String) {
+        chatList.add(ChatMessage(sender = "User", text = command))
+        assistantState.value = AssistantState.THINKING
+
         val intentResult = intentClassifier.classify(command)
-        
+
         when (intentResult.type) {
             IntentType.NOTE_CREATE -> {
                 lifecycleScope.launch {
@@ -92,10 +121,13 @@ class MainActivity : ComponentActivity() {
                         )
                     )
                 }
-                ttsManager.speak("Note save kar liya hai: ${intentResult.target}")
+                val reply = "Note save kar liya hai: ${intentResult.target}"
+                chatList.add(ChatMessage(sender = "Sathi", text = reply))
+                ttsManager.speak(reply)
             }
             else -> {
                 val actionResult = actionExecutor.execute(intentResult)
+                chatList.add(ChatMessage(sender = "Sathi", text = actionResult.message))
                 ttsManager.speak(actionResult.message)
             }
         }
@@ -127,8 +159,6 @@ class MainActivity : ComponentActivity() {
 
         if (missing.isNotEmpty()) {
             permissionLauncher.launch(missing.toTypedArray())
-        } else {
-            startVoiceService()
         }
     }
 
@@ -143,6 +173,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        try {
+            unregisterReceiver(ttsStateReceiver)
+        } catch (_: Exception) {}
         ttsManager.shutdown()
     }
 }
