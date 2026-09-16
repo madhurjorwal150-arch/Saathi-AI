@@ -9,7 +9,6 @@ class SathiIntentClassifier {
     fun classify(text: String, userName: String = "Madhur"): SathiIntent {
         val clean = text.lowercase(Locale.ROOT).trim()
 
-        // 1. Torch / Flashlight Control
         if (clean.contains("torch on") || clean.contains("light jalao") || clean.contains("flashlight on") || clean.contains("torch chalao")) {
             return SathiIntent(IntentType.TORCH_ON, text, directReply = "Torch on kar di hai.")
         }
@@ -17,7 +16,6 @@ class SathiIntentClassifier {
             return SathiIntent(IntentType.TORCH_OFF, text, directReply = "Torch band kar di hai.")
         }
 
-        // 2. Volume Control
         if (clean.contains("volume badhao") || clean.contains("volume up") || clean.contains("aawaz badhao")) {
             return SathiIntent(IntentType.VOLUME_UP, text, directReply = "Volume badha diya hai.")
         }
@@ -25,7 +23,6 @@ class SathiIntentClassifier {
             return SathiIntent(IntentType.VOLUME_DOWN, text, directReply = "Volume kam kar diya hai.")
         }
 
-        // 3. Spotify Music Playback
         if (clean.contains("spotify") || (clean.startsWith("play") && !clean.contains("youtube"))) {
             val song = clean.replace("play", "")
                 .replace("on spotify", "")
@@ -37,7 +34,6 @@ class SathiIntentClassifier {
             return SathiIntent(IntentType.PLAY_MUSIC_SPOTIFY, text, target = song, directReply = "$song Spotify par play kiya ja raha hai.")
         }
 
-        // 4. YouTube Intent (Play vs Search)
         if (clean.contains("youtube")) {
             val query = clean.replace("youtube", "")
                 .replace("par", "")
@@ -54,7 +50,6 @@ class SathiIntentClassifier {
             }
         }
 
-        // 5. Timer & Alarm
         if (clean.contains("timer")) {
             val minutes = Regex("(\\d+)").find(clean)?.value?.toIntOrNull() ?: 5
             return SathiIntent(
@@ -76,13 +71,11 @@ class SathiIntentClassifier {
             )
         }
 
-        // 6. Notes
         if (clean.contains("note") && (clean.contains("banao") || clean.contains("likho") || clean.contains("save"))) {
             val note = text.replace(Regex("(?i)(note banao|note likho|save note|isko note kar do)"), "").trim()
             return SathiIntent(IntentType.CREATE_NOTE, text, target = note, directReply = "Note save kar liya hai: $note")
         }
 
-        // 7. Dynamic App Launching
         if (clean.startsWith("open") || clean.startsWith("kholo") || clean.startsWith("launch") || clean.contains("khol do")) {
             val app = clean.replace("open", "")
                 .replace("kholo", "")
@@ -93,13 +86,11 @@ class SathiIntentClassifier {
             return SathiIntent(IntentType.OPEN_APP, text, target = app, directReply = "$app open kiya ja raha hai.")
         }
 
-        // 8. Explicit Web Search (Sirf jab user bole)
         if (clean.startsWith("search") || clean.contains("google par search") || clean.startsWith("google ")) {
             val q = clean.replace("search", "").replace("google par", "").replace("google", "").trim()
             return SathiIntent(IntentType.SEARCH_WEB, text, target = q, directReply = "Google par search kar raha hoon: $q")
         }
 
-        // 9. Pure Conversation (Never Trigger Google Search)
         val convReply = when {
             clean.contains("i love you") -> "Aww ❤️ Main hamesha tumhara Sathi hoon bhai!"
             clean.contains("kaise ho") || clean.contains("how are you") -> "Main bilkul badiya hoon! Aap batao aaj phone mein kya kaam karein?"

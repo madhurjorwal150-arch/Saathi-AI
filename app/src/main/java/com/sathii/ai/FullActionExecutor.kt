@@ -97,7 +97,6 @@ class FullActionExecutor(private val context: Context) {
             context.startActivity(intent)
             ActionResult(true, "SPOTIFY", "Spotify par $query search & play request bhej di.")
         } catch (e: Exception) {
-            // Fallback web URI
             val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://open.spotify.com/search/" + Uri.encode(query))).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
